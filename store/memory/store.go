@@ -1,4 +1,4 @@
-package persisted
+package memory
 
 import "sync"
 
@@ -11,10 +11,11 @@ func New() *Store {
 	return &Store{store: make(map[string]string)}
 }
 
-func (s *Store) Get(key string) (string, error) {
+func (s *Store) Get(key string) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.store[key], nil
+	v, ok := s.store[key]
+	return v, ok, nil
 }
 
 func (s *Store) Set(key string, value string) error {
