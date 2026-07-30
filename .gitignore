@@ -27,6 +27,10 @@ go.work.sum
 # env file
 .env
 
+# Raft/KV runtime state (log store, snapshots, sqlite db)
+data/
+*.db
+
 # Editor/IDE
 # .idea/
 # .vscode/
