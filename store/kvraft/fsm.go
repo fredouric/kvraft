@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/fredouric/kvraft/store"
 	"github.com/hashicorp/raft"
@@ -11,10 +12,24 @@ import (
 
 type FSM struct {
 	s store.Store
+
+	// nodes maps a server ID to its RPC address. Apply writes it under the
+	// single Raft goroutine; AddrFor reads it from client-serving goroutines,
+	// so a mutex guards it.
+	mu    sync.RWMutex
+	nodes map[string]string
 }
 
 func NewFSM(s store.Store) *FSM {
-	return &FSM{s: s}
+	return &FSM{s: s, nodes: make(map[string]string)}
+}
+
+// AddrFor returns the RPC address for a server ID, if the FSM has seen it.
+func (f *FSM) AddrFor(id string) (string, bool) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	addr, ok := f.nodes[id]
+	return addr, ok
 }
 
 func (f *FSM) Apply(log *raft.Log) interface{} {
@@ -31,6 +46,10 @@ func (f *FSM) Apply(log *raft.Log) interface{} {
 		if err := f.s.Delete(cmd.Key); err != nil {
 			panic(fmt.Errorf("unable to apply delete: %s", err))
 		}
+	case OpAddNode:
+		f.mu.Lock()
+		f.nodes[cmd.Key] = cmd.Value
+		f.mu.Unlock()
 	default:
 		panic(fmt.Errorf("unrecognized command: %s", cmd.Op))
 

@@ -13,7 +13,7 @@ func newTestClient(t *testing.T) *rpc.Client {
 	t.Helper()
 
 	kv := &server.KVService{Store: memory.New()}
-	s := server.New(":0", kv)
+	s := server.New(":0", kv, &server.ClusterService{})
 	if err := s.Listen(); err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestSetGetRoundTrip(t *testing.T) {
 
 	// Act
 	setArgs := &kvapi.SetArgs{Key: "foo", Value: "bar"}
-	if err := client.Call("KVService.Set", setArgs, &kvapi.Empty{}); err != nil {
+	if err := client.Call("KVService.Set", setArgs, &kvapi.WriteReply{}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
@@ -58,11 +58,11 @@ func TestSetDeleteRoundTrip(t *testing.T) {
 
 	// Act
 	setArgs := &kvapi.SetArgs{Key: "foo", Value: "bar"}
-	if err := client.Call("KVService.Set", setArgs, &kvapi.Empty{}); err != nil {
+	if err := client.Call("KVService.Set", setArgs, &kvapi.WriteReply{}); err != nil {
 		t.Fatalf("set: %v", err)
 	}
 
-	var reply kvapi.Empty
+	var reply kvapi.WriteReply
 	if err := client.Call("KVService.Delete", &kvapi.DeleteArgs{Key: "foo"}, &reply); err != nil {
 		t.Fatalf("get: %v", err)
 	}

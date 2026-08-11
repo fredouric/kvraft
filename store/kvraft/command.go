@@ -9,6 +9,7 @@ type OpKind string
 
 const OpSet OpKind = "set"
 const OpDelete OpKind = "delete"
+const OpAddNode OpKind = "addnode"
 
 type Command struct {
 	Op    OpKind

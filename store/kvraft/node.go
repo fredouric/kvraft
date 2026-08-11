@@ -23,6 +23,7 @@ const (
 type Node struct {
 	raft       *raft.Raft
 	innerStore store.Store
+	fsm        *FSM
 
 	transport     *raft.NetworkTransport
 	snapshotStore raft.SnapshotStore
@@ -30,6 +31,17 @@ type Node struct {
 
 	id   raft.ServerID
 	addr raft.ServerAddress
+}
+
+type NotLeaderError struct {
+	LeaderAddr string
+}
+
+func (e *NotLeaderError) Error() string {
+	if e.LeaderAddr == "" {
+		return "node is not the leader; leader unknown"
+	}
+	return "node is not the leader; leader at " + e.LeaderAddr
 }
 
 func NewNode(store store.Store, localID string, bindAddr string, raftDir string) (*Node, error) {
@@ -61,7 +73,7 @@ func NewNode(store store.Store, localID string, bindAddr string, raftDir string)
 		return nil, err
 	}
 
-	return &Node{raft: r, id: raft.ServerID(localID), addr: transport.LocalAddr(), transport: transport, boltDB: boltDB, snapshotStore: snapshots, innerStore: store}, nil
+	return &Node{raft: r, id: raft.ServerID(localID), addr: transport.LocalAddr(), transport: transport, boltDB: boltDB, snapshotStore: snapshots, innerStore: store, fsm: fsm}, nil
 }
 
 func (n *Node) Bootstrap() error {
@@ -116,37 +128,55 @@ func (n *Node) Get(key string) (string, bool, error) {
 
 func (n *Node) Set(key string, value string) error {
 	if n.raft.State() != raft.Leader {
-		return raft.ErrNotLeader
+		return &NotLeaderError{LeaderAddr: n.leaderRPCAddr()}
 	}
-
-	cmd := Command{Op: OpSet, Key: key, Value: value}
-	b, err := Encode(cmd)
-	if err != nil {
-		return err
-	}
-
-	return n.raft.Apply(b, raftTimeout).Error()
+	return n.apply(Command{Op: OpSet, Key: key, Value: value})
 }
 
 func (n *Node) Delete(key string) error {
 	if n.raft.State() != raft.Leader {
-		return raft.ErrNotLeader
+		return &NotLeaderError{LeaderAddr: n.leaderRPCAddr()}
 	}
-	cmd := Command{Op: OpDelete, Key: key}
+	return n.apply(Command{Op: OpDelete, Key: key})
+}
+
+// apply encodes a command and commits it through the Raft log. Only the leader
+// may call it.
+func (n *Node) apply(cmd Command) error {
 	b, err := Encode(cmd)
 	if err != nil {
 		return err
 	}
-
 	return n.raft.Apply(b, raftTimeout).Error()
 }
 
-func (n *Node) Join(nodeID, addr string) error {
+// leaderRPCAddr returns the current leader's RPC address, or an empty string
+// when no leader is known or its address has not replicated yet.
+func (n *Node) leaderRPCAddr() string {
+	_, id := n.raft.LeaderWithID()
+	if id == "" {
+		return ""
+	}
+	addr, _ := n.fsm.AddrFor(string(id))
+	return addr
+}
 
-	f := n.raft.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(addr), 0, 0)
+// Advertise records this or another node's RPC address in replicated state.
+// The caller must be the leader. Redirects use this mapping later.
+func (n *Node) Advertise(nodeID, rpcAddr string) error {
+	return n.apply(Command{Op: OpAddNode, Key: nodeID, Value: rpcAddr})
+}
+
+// Join adds a voter to the cluster and records its RPC address. The caller must
+// be the leader.
+func (n *Node) Join(nodeID, raftAddr, rpcAddr string) error {
+	f := n.raft.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(raftAddr), 0, 0)
 	if err := f.Error(); err != nil {
 		return err
 	}
-	slog.Info("node joined successfully", "nodeID", nodeID, "addr", addr)
+	if err := n.Advertise(nodeID, rpcAddr); err != nil {
+		return err
+	}
+	slog.Info("node joined successfully", "nodeID", nodeID, "raft", raftAddr, "rpc", rpcAddr)
 	return nil
 }

@@ -20,7 +20,13 @@ type DeleteArgs struct {
 	Key string
 }
 
+type WriteReply struct {
+	NotLeader  bool
+	LeaderAddr string
+}
+
 type JoinArgs struct {
 	NodeID   string
 	RaftAddr string
+	RpcAddr  string
 }

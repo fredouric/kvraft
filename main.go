@@ -85,18 +85,17 @@ func runServe(cfg config) error {
 		if err := node.WaitForLeader(10 * time.Second); err != nil {
 			return fmt.Errorf("wait for leader: %w", err)
 		}
+		if err := node.Advertise(cfg.id, cfg.rpcAddr); err != nil {
+			return fmt.Errorf("advertise self: %w", err)
+		}
 		slog.Info("cluster bootstrapped", "id", cfg.id, "raft", cfg.raftAddr)
 	default:
-		slog.Info("started without bootstrap; awaiting cluster membership", "id", cfg.id, "join", cfg.join)
-		client, err := rpc.DialHTTP("tcp", cfg.join)
-		if err != nil {
-			return err
+		if cfg.join == "" {
+			return fmt.Errorf("a non-bootstrap node needs --join")
 		}
-		defer client.Close()
-
-		joinArgs := &kvapi.JoinArgs{NodeID: cfg.id, RaftAddr: cfg.raftAddr}
-		if err := client.Call("ClusterService.Join", joinArgs, &kvapi.Empty{}); err != nil {
-			return err
+		slog.Info("joining cluster", "id", cfg.id, "join", cfg.join)
+		if err := joinCluster(cfg); err != nil {
+			return fmt.Errorf("join cluster: %w", err)
 		}
 		slog.Info("successfully joined cluster", "id", cfg.id, "join", cfg.join)
 	}
@@ -127,4 +126,27 @@ func runServe(cfg config) error {
 		slog.Error("failed to close store", "error", err)
 	}
 	return nil
+}
+
+func joinCluster(cfg config) error {
+	const tries = 20
+	args := &kvapi.JoinArgs{NodeID: cfg.id, RaftAddr: cfg.raftAddr, RpcAddr: cfg.rpcAddr}
+
+	var lastErr error
+	for i := 0; i < tries; i++ {
+		client, err := rpc.DialHTTP("tcp", cfg.join)
+		if err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		err = client.Call("ClusterService.Join", args, &kvapi.Empty{})
+		client.Close()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		time.Sleep(500 * time.Millisecond)
+	}
+	return lastErr
 }

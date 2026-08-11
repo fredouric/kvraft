@@ -10,5 +10,5 @@ type ClusterService struct {
 }
 
 func (c *ClusterService) Join(args *kvapi.JoinArgs, reply *kvapi.Empty) error {
-	return c.Node.Join(args.NodeID, args.RaftAddr)
+	return c.Node.Join(args.NodeID, args.RaftAddr, args.RpcAddr)
 }

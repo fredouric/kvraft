@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/rpc"
 
 	"github.com/fredouric/kvraft/kvapi"
 	"github.com/fredouric/kvraft/store"
+	"github.com/fredouric/kvraft/store/kvraft"
 )
 
 type KVService struct {
@@ -24,12 +26,22 @@ func (k *KVService) Get(args *kvapi.GetArgs, reply *kvapi.GetReply) error {
 	return nil
 }
 
-func (k *KVService) Set(args *kvapi.SetArgs, reply *kvapi.Empty) error {
-	return k.Store.Set(args.Key, args.Value)
+func (k *KVService) Set(args *kvapi.SetArgs, reply *kvapi.WriteReply) error {
+	return redirectOrError(k.Store.Set(args.Key, args.Value), reply)
 }
 
-func (k *KVService) Delete(args *kvapi.DeleteArgs, reply *kvapi.Empty) error {
-	return k.Store.Delete(args.Key)
+func (k *KVService) Delete(args *kvapi.DeleteArgs, reply *kvapi.WriteReply) error {
+	return redirectOrError(k.Store.Delete(args.Key), reply)
+}
+
+func redirectOrError(err error, reply *kvapi.WriteReply) error {
+	var nle *kvraft.NotLeaderError
+	if errors.As(err, &nle) {
+		reply.NotLeader = true
+		reply.LeaderAddr = nle.LeaderAddr
+		return nil
+	}
+	return err
 }
 
 type Server struct {
