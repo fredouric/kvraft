@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/rpc"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/fredouric/kvraft/kvapi"
 	"github.com/fredouric/kvraft/server"
 	"github.com/fredouric/kvraft/store/kvraft"
 	"github.com/fredouric/kvraft/store/sqlite"
@@ -86,10 +88,22 @@ func runServe(cfg config) error {
 		slog.Info("cluster bootstrapped", "id", cfg.id, "raft", cfg.raftAddr)
 	default:
 		slog.Info("started without bootstrap; awaiting cluster membership", "id", cfg.id, "join", cfg.join)
+		client, err := rpc.DialHTTP("tcp", cfg.join)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+
+		joinArgs := &kvapi.JoinArgs{NodeID: cfg.id, RaftAddr: cfg.raftAddr}
+		if err := client.Call("ClusterService.Join", joinArgs, &kvapi.Empty{}); err != nil {
+			return err
+		}
+		slog.Info("successfully joined cluster", "id", cfg.id, "join", cfg.join)
 	}
 
 	kv := &server.KVService{Store: node}
-	srv := server.New(cfg.rpcAddr, kv)
+	cluster := &server.ClusterService{Node: node}
+	srv := server.New(cfg.rpcAddr, kv, cluster)
 	if err := srv.Listen(); err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}

@@ -2,6 +2,7 @@ package kvraft
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -138,4 +139,14 @@ func (n *Node) Delete(key string) error {
 	}
 
 	return n.raft.Apply(b, raftTimeout).Error()
+}
+
+func (n *Node) Join(nodeID, addr string) error {
+
+	f := n.raft.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(addr), 0, 0)
+	if err := f.Error(); err != nil {
+		return err
+	}
+	slog.Info("node joined successfully", "nodeID", nodeID, "addr", addr)
+	return nil
 }

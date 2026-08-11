@@ -19,3 +19,8 @@ type SetArgs struct {
 type DeleteArgs struct {
 	Key string
 }
+
+type JoinArgs struct {
+	NodeID   string
+	RaftAddr string
+}
