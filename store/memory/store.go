@@ -1,6 +1,9 @@
 package memory
 
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 type Store struct {
 	mu    sync.Mutex
@@ -29,5 +32,22 @@ func (s *Store) Delete(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.store, key)
+	return nil
+}
+
+func (s *Store) Dump() (map[string]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dump := make(map[string]string)
+	maps.Copy(dump, s.store)
+	return dump, nil
+}
+
+func (s *Store) Restore(snapshot map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	restored := make(map[string]string)
+	maps.Copy(restored, snapshot)
+	s.store = restored
 	return nil
 }

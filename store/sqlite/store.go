@@ -59,3 +59,44 @@ func (s *Store) Delete(key string) error {
 	_, err := s.db.Exec("DELETE FROM kv WHERE key = ?", key)
 	return err
 }
+
+func (s *Store) Dump() (map[string]string, error) {
+	dump := make(map[string]string)
+	rows, err := s.db.Query("SELECT key, value FROM kv")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		dump[k] = v
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return dump, nil
+
+}
+
+func (s *Store) Restore(snapshot map[string]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM kv"); err != nil {
+		return err
+	}
+	for k, v := range snapshot {
+		if _, err := tx.Exec("INSERT INTO kv (key, value) VALUES (?,?)", k, v); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}

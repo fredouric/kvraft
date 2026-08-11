@@ -5,3 +5,8 @@ type Store interface {
 	Set(key string, value string) error
 	Delete(key string) error
 }
+
+type Snapshotter interface {
+	Dump() (map[string]string, error)
+	Restore(map[string]string) error
+}
