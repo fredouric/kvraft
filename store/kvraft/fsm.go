@@ -13,9 +13,6 @@ import (
 type FSM struct {
 	s store.Store
 
-	// nodes maps a server ID to its RPC address. Apply writes it under the
-	// single Raft goroutine; AddrFor reads it from client-serving goroutines,
-	// so a mutex guards it.
 	mu    sync.RWMutex
 	nodes map[string]string
 }
@@ -24,7 +21,6 @@ func NewFSM(s store.Store) *FSM {
 	return &FSM{s: s, nodes: make(map[string]string)}
 }
 
-// AddrFor returns the RPC address for a server ID, if the FSM has seen it.
 func (f *FSM) AddrFor(id string) (string, bool) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
