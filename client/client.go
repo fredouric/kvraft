@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/fredouric/kvraft/kvapi"
+	"github.com/fredouric/kvraft/shard"
 )
 
 const (
@@ -14,54 +15,61 @@ const (
 )
 
 type Client struct {
-	addr string
-	conn *rpc.Client
+	cfg     *shard.Config
+	leaders map[string]string
+	conns   map[string]*rpc.Client
 }
 
-func New(addr string) *Client {
-	return &Client{addr: addr}
+func New(cfg shard.Config) *Client {
+	return &Client{cfg: &cfg, leaders: make(map[string]string), conns: make(map[string]*rpc.Client)}
 }
 
-func (c *Client) Close() error {
-	return c.reset()
-}
-
-func (c *Client) dial() (*rpc.Client, error) {
-	if c.conn != nil {
-		return c.conn, nil
+func (c *Client) Close() {
+	for group := range c.conns {
+		c.reset(group)
 	}
-	conn, err := rpc.DialHTTP("tcp", c.addr)
+}
+
+func (c *Client) dial(groupID string, members []string) (*rpc.Client, error) {
+	if conn := c.conns[groupID]; conn != nil {
+		return conn, nil
+	}
+	addr := c.leaders[groupID]
+	if addr == "" {
+		addr = members[0]
+	}
+	conn, err := rpc.DialHTTP("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	c.conn = conn
+	c.conns[groupID] = conn
 	return conn, nil
 }
 
-func (c *Client) reset() error {
-	if c.conn == nil {
-		return nil
+func (c *Client) reset(groupID string) {
+	if conn := c.conns[groupID]; conn != nil {
+		conn.Close()
+		delete(c.conns, groupID)
 	}
-	err := c.conn.Close()
-	c.conn = nil
-	return err
 }
 
 func (c *Client) Set(key, value string) error {
-	return c.write("KVService.Set", &kvapi.SetArgs{Key: key, Value: value})
+	group, members := c.cfg.GroupForKey(key)
+	return c.write(group, members, "KVService.Set", &kvapi.SetArgs{Key: key, Value: value})
 }
 
 func (c *Client) Delete(key string) error {
-	return c.write("KVService.Delete", &kvapi.DeleteArgs{Key: key})
+	group, members := c.cfg.GroupForKey(key)
+	return c.write(group, members, "KVService.Delete", &kvapi.DeleteArgs{Key: key})
 }
 
-func (c *Client) write(method string, args any) error {
+func (c *Client) write(groupID string, members []string, method string, args any) error {
 	var lastErr error
 	for i := 0; i < maxAttempts; i++ {
-		conn, err := c.dial()
+		conn, err := c.dial(groupID, members)
 		if err != nil {
 			lastErr = err
-			c.reset()
+			c.reset(groupID)
 			time.Sleep(retryDelay)
 			continue
 		}
@@ -69,16 +77,16 @@ func (c *Client) write(method string, args any) error {
 		var reply kvapi.WriteReply
 		if err := conn.Call(method, args, &reply); err != nil {
 			lastErr = err
-			c.reset()
+			c.reset(groupID)
 			time.Sleep(retryDelay)
 			continue
 		}
 
 		if reply.NotLeader {
 			if reply.LeaderAddr != "" {
-				c.addr = reply.LeaderAddr
+				c.leaders[groupID] = reply.LeaderAddr
 			}
-			c.reset()
+			c.reset(groupID)
 			time.Sleep(retryDelay)
 			continue
 		}
@@ -89,13 +97,14 @@ func (c *Client) write(method string, args any) error {
 }
 
 func (c *Client) Get(key string) (string, bool, error) {
-	conn, err := c.dial()
+	group, members := c.cfg.GroupForKey(key)
+	conn, err := c.dial(group, members)
 	if err != nil {
 		return "", false, err
 	}
 	var reply kvapi.GetReply
 	if err := conn.Call("KVService.Get", &kvapi.GetArgs{Key: key}, &reply); err != nil {
-		c.reset()
+		c.reset(group)
 		return "", false, err
 	}
 	return reply.Value, reply.Found, nil
