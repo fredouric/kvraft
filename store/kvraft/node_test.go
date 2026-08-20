@@ -103,7 +103,7 @@ func TestSnapshotRestore(t *testing.T) {
 	}
 
 	// Force a snapshot. This calls FSM.Snapshot + Persist and compacts the log.
-	if err := n1.raft.Snapshot().Error(); err != nil {
+	if err := n1.group.Snapshot().Error(); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
 	if err := n1.Close(); err != nil {
