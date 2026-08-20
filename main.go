@@ -15,17 +15,20 @@ import (
 
 	"github.com/fredouric/kvraft/kvapi"
 	"github.com/fredouric/kvraft/server"
+	"github.com/fredouric/kvraft/shardctrl"
 	"github.com/fredouric/kvraft/store/kvraft"
 	"github.com/fredouric/kvraft/store/sqlite"
 )
 
 type config struct {
-	id        string
-	raftAddr  string
-	rpcAddr   string
-	dataDir   string
-	bootstrap bool
-	join      string
+	id         string
+	raftAddr   string
+	rpcAddr    string
+	dataDir    string
+	bootstrap  bool
+	join       string
+	controller bool
+	nshards    int
 }
 
 func main() {
@@ -56,6 +59,8 @@ func rootCmd() *cobra.Command {
 	f.StringVar(&cfg.dataDir, "data-dir", "", "dir for raft log, snapshots, kv db (default: data/<id>)")
 	f.BoolVar(&cfg.bootstrap, "bootstrap", false, "bootstrap a new cluster")
 	f.StringVar(&cfg.join, "join", "", "RPC address of an existing node to join")
+	f.BoolVar(&cfg.controller, "controller", false, "run as a shard controller node")
+	f.IntVar(&cfg.nshards, "nshards", 256, "number of shards (controller only)")
 
 	cmd.MarkFlagRequired("id")
 
@@ -63,6 +68,10 @@ func rootCmd() *cobra.Command {
 }
 
 func runServe(cfg config) error {
+	if cfg.controller {
+		return runController(cfg)
+	}
+
 	if err := os.MkdirAll(cfg.dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
@@ -124,6 +133,63 @@ func runServe(cfg config) error {
 	}
 	if err := s.Close(); err != nil {
 		slog.Error("failed to close store", "error", err)
+	}
+	return nil
+}
+
+func runController(cfg config) error {
+	if err := os.MkdirAll(cfg.dataDir, 0o755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+
+	node, err := shardctrl.NewNode(cfg.nshards, cfg.id, cfg.raftAddr, cfg.dataDir)
+	if err != nil {
+		return fmt.Errorf("init controller node: %w", err)
+	}
+
+	switch {
+	case cfg.bootstrap:
+		if err := node.Bootstrap(); err != nil {
+			return fmt.Errorf("bootstrap controller: %w", err)
+		}
+		if err := node.WaitForLeader(10 * time.Second); err != nil {
+			return fmt.Errorf("wait for leader: %w", err)
+		}
+		slog.Info("controller bootstrapped", "id", cfg.id, "raft", cfg.raftAddr)
+	default:
+		if cfg.join == "" {
+			return fmt.Errorf("a non-bootstrap controller needs --join")
+		}
+		slog.Info("joining controller", "id", cfg.id, "join", cfg.join)
+		c := shardctrl.NewClient([]string{cfg.join})
+		if err := c.AddNode(cfg.id, cfg.raftAddr); err != nil {
+			c.Close()
+			return fmt.Errorf("join controller: %w", err)
+		}
+		c.Close()
+		slog.Info("joined controller", "id", cfg.id)
+	}
+
+	ctrl := &server.ControllerService{Node: node}
+	srv := server.New(cfg.rpcAddr, ctrl)
+	if err := srv.Listen(); err != nil {
+		return fmt.Errorf("listen: %w", err)
+	}
+	slog.Info("controller listening", "rpc", srv.Addr(), "raft", cfg.raftAddr)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+
+	slog.Info("shutting down controller")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("failed to shut down server", "error", err)
+	}
+	if err := node.Close(); err != nil {
+		slog.Error("failed to close controller node", "error", err)
 	}
 	return nil
 }

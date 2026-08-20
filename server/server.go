@@ -48,16 +48,14 @@ type Server struct {
 	addr string
 	ln   net.Listener
 
-	kv      *KVService
-	http    *http.Server
-	cluster *ClusterService
+	http     *http.Server
+	services []any
 }
 
-func New(addr string, kv *KVService, cluster *ClusterService) *Server {
+func New(addr string, services ...any) *Server {
 	return &Server{
-		addr:    addr,
-		kv:      kv,
-		cluster: cluster,
+		addr:     addr,
+		services: services,
 	}
 }
 
@@ -68,11 +66,10 @@ func (s *Server) Addr() string {
 func (s *Server) Listen() error {
 
 	server := rpc.NewServer()
-	if err := server.Register(s.kv); err != nil {
-		return err
-	}
-	if err := server.Register(s.cluster); err != nil {
-		return err
+	for _, svc := range s.services {
+		if err := server.Register(svc); err != nil {
+			return err
+		}
 	}
 	mux := http.NewServeMux()
 	mux.Handle(rpc.DefaultRPCPath, server)
