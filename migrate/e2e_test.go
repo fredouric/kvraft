@@ -67,6 +67,7 @@ func startController(t *testing.T) string {
 
 type kvGroup struct {
 	node    *kvraft.Node
+	store   *memory.Store
 	rpcAddr string
 }
 
@@ -107,7 +108,7 @@ func startGroup(t *testing.T, id, group string, ctrlAddrs []string) *kvGroup {
 		node.Close()
 		ctrl.Close()
 	})
-	return &kvGroup{node: node, rpcAddr: rpcAddr}
+	return &kvGroup{node: node, store: store, rpcAddr: rpcAddr}
 }
 
 // TestJoinTriggersPull starts one group, writes data, then joins a second
@@ -233,4 +234,12 @@ func TestMove(t *testing.T) {
 		v, ok, err := c.Get(key)
 		return err == nil && ok && v == value
 	}, "value did not survive the move; the new owner did not pull the data")
+
+	// The old owner must drop the handed-off key after it confirms the move.
+	groups := map[string]*kvGroup{"g1": g1, "g2": g2}
+	old := groups[from]
+	eventually(t, 10*time.Second, func() bool {
+		_, ok, _ := old.store.Get(key)
+		return !ok
+	}, "old owner did not garbage collect the handed-off key")
 }

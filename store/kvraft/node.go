@@ -42,7 +42,7 @@ func (e *WrongGroupError) Error() string {
 }
 
 func NewNode(store store.Store, localID string, bindAddr string, raftDir string, nShards int, sharded bool) (*Node, error) {
-	fsm := NewFSM(store)
+	fsm := NewFSM(store, nShards)
 	group, err := raftgroup.New(fsm, localID, bindAddr, raftDir)
 	if err != nil {
 		return nil, err
@@ -101,12 +101,31 @@ func (n *Node) Delete(key string) error {
 }
 
 func (n *Node) apply(cmd Command) error {
+	_, err := n.applyResp(cmd)
+	return err
+}
+
+func (n *Node) applyResp(cmd Command) (interface{}, error) {
 	b, err := Encode(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = n.group.Apply(b, raftTimeout)
-	return err
+	return n.group.Apply(b, raftTimeout)
+}
+
+// Drop deletes the handed-off shards through the raft log so all replicas drop
+// them. It returns whether this node has caught up to config num. A false
+// return means the new owner must retry the confirm later.
+func (n *Node) Drop(num int, shards []int) (bool, error) {
+	if !n.group.IsLeader() {
+		return false, &NotLeaderError{LeaderAddr: n.leaderRPCAddr()}
+	}
+	resp, err := n.applyResp(Command{Op: OpDrop, Num: num, Shards: shards})
+	if err != nil {
+		return false, err
+	}
+	dropped, _ := resp.(bool)
+	return dropped, nil
 }
 
 func (n *Node) leaderRPCAddr() string {

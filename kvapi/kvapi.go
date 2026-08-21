@@ -42,3 +42,14 @@ type PullReply struct {
 	Ready bool
 	Data  map[string]string
 }
+
+type ConfirmArgs struct {
+	Num    int
+	Shards []int
+}
+
+type ConfirmReply struct {
+	Dropped    bool
+	NotLeader  bool
+	LeaderAddr string
+}

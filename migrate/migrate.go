@@ -20,6 +20,15 @@ type Migrator struct {
 	ctrl    *shardctrl.Client
 	group   string
 	nShards int
+
+	confirms []confirmJob
+}
+
+// confirmJob tells a previous owner it may drop shards it handed off at num.
+type confirmJob struct {
+	num     int
+	members []string
+	shards  []int
 }
 
 func New(node *kvraft.Node, ctrl *shardctrl.Client, group string, nShards int) *Migrator {
@@ -43,6 +52,7 @@ func (m *Migrator) step(ctx context.Context) {
 	if !m.node.IsLeader() {
 		return
 	}
+	m.flushConfirms(ctx)
 	cur := m.node.ConfigNum()
 
 	if pending := m.node.Pending(); len(pending) > 0 {
@@ -54,7 +64,10 @@ func (m *Migrator) step(ctx context.Context) {
 		if err != nil {
 			return
 		}
-		m.node.Install(cur, data)
+		if err := m.node.Install(cur, data); err != nil {
+			return
+		}
+		m.enqueueConfirms(prev, pending, cur)
 		return
 	}
 
@@ -97,6 +110,59 @@ func (m *Migrator) pullAll(ctx context.Context, prev shardctrl.Config, pending [
 		}
 	}
 	return data, nil
+}
+
+// enqueueConfirms groups the installed shards by previous owner and queues a
+// confirm for each. The old owner drops the data once it gets the confirm.
+func (m *Migrator) enqueueConfirms(prev shardctrl.Config, pending []int, num int) {
+	byOwner := map[string][]int{}
+	for _, s := range pending {
+		owner := prev.Shards[s]
+		if owner == "" {
+			continue
+		}
+		byOwner[owner] = append(byOwner[owner], s)
+	}
+	for owner, shards := range byOwner {
+		m.confirms = append(m.confirms, confirmJob{num: num, members: prev.Groups[owner], shards: shards})
+	}
+}
+
+// flushConfirms tries each queued confirm once and keeps the ones not yet done.
+func (m *Migrator) flushConfirms(ctx context.Context) {
+	if len(m.confirms) == 0 {
+		return
+	}
+	kept := m.confirms[:0:0]
+	for _, job := range m.confirms {
+		if ctx.Err() != nil {
+			return
+		}
+		if !sendConfirm(job) {
+			kept = append(kept, job)
+		}
+	}
+	m.confirms = kept
+}
+
+// sendConfirm tries the members until one drops the shards. It returns false so
+// the caller retries later when no member has caught up to the config yet.
+func sendConfirm(job confirmJob) bool {
+	args := &kvapi.ConfirmArgs{Num: job.num, Shards: job.shards}
+	for _, addr := range job.members {
+		conn, err := rpc.DialHTTP("tcp", addr)
+		if err != nil {
+			continue
+		}
+		var reply kvapi.ConfirmReply
+		err = conn.Call("MigrationService.Confirm", args, &reply)
+		conn.Close()
+		if err != nil || reply.NotLeader {
+			continue
+		}
+		return reply.Dropped
+	}
+	return false
 }
 
 func pullFromGroup(ctx context.Context, members []string, num int, shards []int) (map[string]string, error) {

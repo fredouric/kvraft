@@ -7,12 +7,14 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/fredouric/kvraft/shard"
 	"github.com/fredouric/kvraft/store"
 	"github.com/hashicorp/raft"
 )
 
 type FSM struct {
-	s store.Store
+	s       store.Store
+	nShards int
 
 	mu        sync.RWMutex
 	nodes     map[string]string
@@ -21,9 +23,10 @@ type FSM struct {
 	pending   map[int]bool
 }
 
-func NewFSM(s store.Store) *FSM {
+func NewFSM(s store.Store, nShards int) *FSM {
 	return &FSM{
 		s:       s,
+		nShards: nShards,
 		nodes:   make(map[string]string),
 		served:  make(map[int]bool),
 		pending: make(map[int]bool),
@@ -104,12 +107,50 @@ func (f *FSM) Apply(log *raft.Log) interface{} {
 			clear(f.pending)
 		}
 		f.mu.Unlock()
+	case OpDrop:
+		return f.drop(cmd)
 	default:
 		panic(fmt.Errorf("unrecognized command: %s", cmd.Op))
 
 	}
 
 	return nil
+}
+
+// drop deletes the keys of handed-off shards. It never drops a shard the node
+// still serves, and it reports whether the node has caught up to the config
+// that moved the shards away. A false return tells the new owner to retry.
+func (f *FSM) drop(cmd Command) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if cmd.Num > f.configNum {
+		return false
+	}
+	toDrop := make(map[int]bool, len(cmd.Shards))
+	for _, sh := range cmd.Shards {
+		if !f.served[sh] {
+			toDrop[sh] = true
+		}
+	}
+	if len(toDrop) == 0 {
+		return true
+	}
+	snap, ok := f.s.(store.Snapshotter)
+	if !ok {
+		return true
+	}
+	dump, err := snap.Dump()
+	if err != nil {
+		panic(fmt.Errorf("unable to dump for drop: %s", err))
+	}
+	for k := range dump {
+		if toDrop[shard.Index(k, f.nShards)] {
+			if err := f.s.Delete(k); err != nil {
+				panic(fmt.Errorf("unable to apply drop: %s", err))
+			}
+		}
+	}
+	return true
 }
 
 func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {

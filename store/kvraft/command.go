@@ -12,6 +12,7 @@ const OpDelete OpKind = "delete"
 const OpAddNode OpKind = "addnode"
 const OpFreeze OpKind = "freeze"
 const OpInstall OpKind = "install"
+const OpDrop OpKind = "drop"
 
 type Command struct {
 	Op    OpKind
@@ -22,6 +23,7 @@ type Command struct {
 	Remove   []int
 	ServeNow []int
 	Pending  []int
+	Shards   []int
 	Data     map[string]string
 }
 
