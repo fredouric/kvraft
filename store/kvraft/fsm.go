@@ -43,6 +43,12 @@ func (f *FSM) ConfigNum() int {
 	return f.configNum
 }
 
+func (f *FSM) Serves(shard int) bool {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.served[shard]
+}
+
 func (f *FSM) Pending() []int {
 	f.mu.RLock()
 	defer f.mu.RUnlock()

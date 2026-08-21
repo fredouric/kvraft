@@ -19,6 +19,11 @@ type KVService struct {
 func (k *KVService) Get(args *kvapi.GetArgs, reply *kvapi.GetReply) error {
 	v, ok, err := k.Store.Get(args.Key)
 	if err != nil {
+		var wge *kvraft.WrongGroupError
+		if errors.As(err, &wge) {
+			reply.WrongGroup = true
+			return nil
+		}
 		return err
 	}
 	reply.Value = v
@@ -39,6 +44,11 @@ func redirectOrError(err error, reply *kvapi.WriteReply) error {
 	if errors.As(err, &nle) {
 		reply.NotLeader = true
 		reply.LeaderAddr = nle.LeaderAddr
+		return nil
+	}
+	var wge *kvraft.WrongGroupError
+	if errors.As(err, &wge) {
+		reply.WrongGroup = true
 		return nil
 	}
 	return err

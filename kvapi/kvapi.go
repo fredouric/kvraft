@@ -7,8 +7,9 @@ type GetArgs struct {
 }
 
 type GetReply struct {
-	Value string
-	Found bool
+	Value      string
+	Found      bool
+	WrongGroup bool
 }
 
 type SetArgs struct {
@@ -23,6 +24,7 @@ type DeleteArgs struct {
 type WriteReply struct {
 	NotLeader  bool
 	LeaderAddr string
+	WrongGroup bool
 }
 
 type JoinArgs struct {

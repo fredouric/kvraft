@@ -19,6 +19,7 @@ type Node struct {
 	innerStore store.Store
 	fsm        *FSM
 	nShards    int
+	sharded    bool
 }
 
 type NotLeaderError struct {
@@ -32,13 +33,21 @@ func (e *NotLeaderError) Error() string {
 	return "node is not the leader; leader at " + e.LeaderAddr
 }
 
-func NewNode(store store.Store, localID string, bindAddr string, raftDir string, nShards int) (*Node, error) {
+type WrongGroupError struct {
+	Shard int
+}
+
+func (e *WrongGroupError) Error() string {
+	return fmt.Sprintf("group does not serve shard %d", e.Shard)
+}
+
+func NewNode(store store.Store, localID string, bindAddr string, raftDir string, nShards int, sharded bool) (*Node, error) {
 	fsm := NewFSM(store)
 	group, err := raftgroup.New(fsm, localID, bindAddr, raftDir)
 	if err != nil {
 		return nil, err
 	}
-	return &Node{group: group, innerStore: store, fsm: fsm, nShards: nShards}, nil
+	return &Node{group: group, innerStore: store, fsm: fsm, nShards: nShards, sharded: sharded}, nil
 }
 
 func (n *Node) Bootstrap() error {
@@ -53,11 +62,28 @@ func (n *Node) Close() error {
 	return n.group.Close()
 }
 
+func (n *Node) ownsKey(key string) error {
+	if !n.sharded {
+		return nil
+	}
+	sh := shard.Index(key, n.nShards)
+	if !n.fsm.Serves(sh) {
+		return &WrongGroupError{Shard: sh}
+	}
+	return nil
+}
+
 func (n *Node) Get(key string) (string, bool, error) {
+	if err := n.ownsKey(key); err != nil {
+		return "", false, err
+	}
 	return n.innerStore.Get(key)
 }
 
 func (n *Node) Set(key string, value string) error {
+	if err := n.ownsKey(key); err != nil {
+		return err
+	}
 	if !n.group.IsLeader() {
 		return &NotLeaderError{LeaderAddr: n.leaderRPCAddr()}
 	}
@@ -65,6 +91,9 @@ func (n *Node) Set(key string, value string) error {
 }
 
 func (n *Node) Delete(key string) error {
+	if err := n.ownsKey(key); err != nil {
+		return err
+	}
 	if !n.group.IsLeader() {
 		return &NotLeaderError{LeaderAddr: n.leaderRPCAddr()}
 	}

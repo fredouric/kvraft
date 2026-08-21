@@ -34,7 +34,7 @@ func TestSingleNodeWriteReadAndReplay(t *testing.T) {
 	dir := t.TempDir()
 	addr := freePort(t)
 
-	n1, err := NewNode(memory.New(), "node1", addr, dir, 256)
+	n1, err := NewNode(memory.New(), "node1", addr, dir, 256, false)
 	if err != nil {
 		t.Fatalf("NewNode: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestSingleNodeWriteReadAndReplay(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	n2, err := NewNode(memory.New(), "node1", addr, dir, 256)
+	n2, err := NewNode(memory.New(), "node1", addr, dir, 256, false)
 	if err != nil {
 		t.Fatalf("NewNode (restart): %v", err)
 	}
@@ -82,7 +82,7 @@ func TestSnapshotRestore(t *testing.T) {
 	dir := t.TempDir()
 	addr := freePort(t)
 
-	n1, err := NewNode(memory.New(), "node1", addr, dir, 256)
+	n1, err := NewNode(memory.New(), "node1", addr, dir, 256, false)
 	if err != nil {
 		t.Fatalf("NewNode: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestSnapshotRestore(t *testing.T) {
 	}
 
 	// Restart with a BRAND-NEW empty store. Only Restore can refill it.
-	n2, err := NewNode(memory.New(), "node1", addr, dir, 256)
+	n2, err := NewNode(memory.New(), "node1", addr, dir, 256, false)
 	if err != nil {
 		t.Fatalf("NewNode (restart): %v", err)
 	}
