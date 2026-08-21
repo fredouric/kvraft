@@ -16,6 +16,7 @@ type Node struct {
 	group      *raftgroup.Group
 	innerStore store.Store
 	fsm        *FSM
+	nShards    int
 }
 
 type NotLeaderError struct {
@@ -29,13 +30,13 @@ func (e *NotLeaderError) Error() string {
 	return "node is not the leader; leader at " + e.LeaderAddr
 }
 
-func NewNode(store store.Store, localID string, bindAddr string, raftDir string) (*Node, error) {
+func NewNode(store store.Store, localID string, bindAddr string, raftDir string, nShards int) (*Node, error) {
 	fsm := NewFSM(store)
 	group, err := raftgroup.New(fsm, localID, bindAddr, raftDir)
 	if err != nil {
 		return nil, err
 	}
-	return &Node{group: group, innerStore: store, fsm: fsm}, nil
+	return &Node{group: group, innerStore: store, fsm: fsm, nShards: nShards}, nil
 }
 
 func (n *Node) Bootstrap() error {

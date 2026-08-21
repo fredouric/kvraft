@@ -81,7 +81,7 @@ func runServe(cfg config) error {
 		return fmt.Errorf("init store: %w", err)
 	}
 
-	node, err := kvraft.NewNode(s, cfg.id, cfg.raftAddr, cfg.dataDir)
+	node, err := kvraft.NewNode(s, cfg.id, cfg.raftAddr, cfg.dataDir, cfg.nshards)
 	if err != nil {
 		return fmt.Errorf("init raft node: %w", err)
 	}

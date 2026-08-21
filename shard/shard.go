@@ -31,13 +31,17 @@ func New(shardGroups []string, groupMembers map[string][]string) (*Config, error
 }
 
 func (c *Config) GroupForKey(key string) (groupID string, members []string) {
-	index := c.index(key)
+	index := c.Index(key)
 	group := c.shardGroups[index]
 	return group, c.groupMembers[group]
 }
 
-func (c *Config) index(key string) int {
+func (c *Config) Index(key string) int {
+	return Index(key, c.NShards)
+}
+
+func Index(key string, nShards int) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
-	return int(h.Sum32()) % c.NShards
+	return int(h.Sum32()) % nShards
 }
