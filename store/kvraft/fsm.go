@@ -37,6 +37,22 @@ func (f *FSM) AddrFor(id string) (string, bool) {
 	return addr, ok
 }
 
+func (f *FSM) ConfigNum() int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.configNum
+}
+
+func (f *FSM) Pending() []int {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	out := make([]int, 0, len(f.pending))
+	for s := range f.pending {
+		out = append(out, s)
+	}
+	return out
+}
+
 func (f *FSM) Apply(log *raft.Log) interface{} {
 	cmd, err := Decode(log.Data)
 	if err != nil {

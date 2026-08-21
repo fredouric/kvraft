@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/fredouric/kvraft/kvapi"
+	"github.com/fredouric/kvraft/migrate"
 	"github.com/fredouric/kvraft/server"
 	"github.com/fredouric/kvraft/shardctrl"
 	"github.com/fredouric/kvraft/store/kvraft"
@@ -29,6 +30,8 @@ type config struct {
 	join       string
 	controller bool
 	nshards    int
+	group      string
+	ctrlAddrs  []string
 }
 
 func main() {
@@ -60,7 +63,9 @@ func rootCmd() *cobra.Command {
 	f.BoolVar(&cfg.bootstrap, "bootstrap", false, "bootstrap a new cluster")
 	f.StringVar(&cfg.join, "join", "", "RPC address of an existing node to join")
 	f.BoolVar(&cfg.controller, "controller", false, "run as a shard controller node")
-	f.IntVar(&cfg.nshards, "nshards", 256, "number of shards (controller only)")
+	f.IntVar(&cfg.nshards, "nshards", 256, "number of shards")
+	f.StringVar(&cfg.group, "group", "", "shard group ID this node belongs to")
+	f.StringSliceVar(&cfg.ctrlAddrs, "ctrl-addrs", nil, "controller RPC addresses")
 
 	cmd.MarkFlagRequired("id")
 
@@ -111,7 +116,8 @@ func runServe(cfg config) error {
 
 	kv := &server.KVService{Store: node}
 	cluster := &server.ClusterService{Node: node}
-	srv := server.New(cfg.rpcAddr, kv, cluster)
+	migration := &server.MigrationService{Node: node}
+	srv := server.New(cfg.rpcAddr, kv, cluster, migration)
 	if err := srv.Listen(); err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
@@ -119,6 +125,14 @@ func runServe(cfg config) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if cfg.group != "" && len(cfg.ctrlAddrs) > 0 {
+		ctrlClient := shardctrl.NewClient(cfg.ctrlAddrs)
+		mig := migrate.New(node, ctrlClient, cfg.group, cfg.nshards)
+		go mig.Run(ctx)
+		slog.Info("migrator started", "group", cfg.group, "ctrl", cfg.ctrlAddrs)
+	}
+
 	<-ctx.Done()
 
 	slog.Info("shutting down")

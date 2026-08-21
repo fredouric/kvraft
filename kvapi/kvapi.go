@@ -30,3 +30,13 @@ type JoinArgs struct {
 	RaftAddr string
 	RpcAddr  string
 }
+
+type PullArgs struct {
+	Num    int
+	Shards []int
+}
+
+type PullReply struct {
+	Ready bool
+	Data  map[string]string
+}

@@ -1,10 +1,12 @@
 package kvraft
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/fredouric/kvraft/raftgroup"
+	"github.com/fredouric/kvraft/shard"
 	"github.com/fredouric/kvraft/store"
 )
 
@@ -100,4 +102,51 @@ func (n *Node) Join(nodeID, raftAddr, rpcAddr string) error {
 	}
 	slog.Info("node joined successfully", "nodeID", nodeID, "raft", raftAddr, "rpc", rpcAddr)
 	return nil
+}
+
+func (n *Node) IsLeader() bool {
+	return n.group.IsLeader()
+}
+
+func (n *Node) ConfigNum() int {
+	return n.fsm.ConfigNum()
+}
+
+func (n *Node) Pending() []int {
+	return n.fsm.Pending()
+}
+
+func (n *Node) Freeze(num int, remove, serveNow, pending []int) error {
+	return n.apply(Command{Op: OpFreeze, Num: num, Remove: remove, ServeNow: serveNow, Pending: pending})
+}
+
+func (n *Node) Install(num int, data map[string]string) error {
+	return n.apply(Command{Op: OpInstall, Num: num, Data: data})
+}
+
+func (n *Node) PullShards(num int, shards []int) (data map[string]string, ready bool, err error) {
+	if n.fsm.ConfigNum() < num {
+		return nil, false, nil
+	}
+	snap, ok := n.fsm.s.(store.Snapshotter)
+	if !ok {
+		return nil, false, fmt.Errorf("unable to snapshot store")
+	}
+	dump, err := snap.Dump()
+	if err != nil {
+		return nil, false, err
+	}
+
+	want := make(map[int]bool, len(shards))
+	for _, s := range shards {
+		want[s] = true
+	}
+
+	data = make(map[string]string)
+	for k, v := range dump {
+		if want[shard.Index(k, n.nShards)] {
+			data[k] = v
+		}
+	}
+	return data, true, nil
 }
