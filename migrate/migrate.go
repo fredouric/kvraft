@@ -34,12 +34,12 @@ func (m *Migrator) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.step()
+			m.step(ctx)
 		}
 	}
 }
 
-func (m *Migrator) step() {
+func (m *Migrator) step(ctx context.Context) {
 	if !m.node.IsLeader() {
 		return
 	}
@@ -50,7 +50,7 @@ func (m *Migrator) step() {
 		if err != nil {
 			return
 		}
-		data, err := m.pullAll(prev, pending, cur)
+		data, err := m.pullAll(ctx, prev, pending, cur)
 		if err != nil {
 			return
 		}
@@ -79,7 +79,7 @@ func (m *Migrator) step() {
 	m.node.Freeze(cur+1, remove, serveNow, pending)
 }
 
-func (m *Migrator) pullAll(prev shardctrl.Config, pending []int, num int) (map[string]string, error) {
+func (m *Migrator) pullAll(ctx context.Context, prev shardctrl.Config, pending []int, num int) (map[string]string, error) {
 	byOwner := map[string][]int{}
 	for _, s := range pending {
 		owner := prev.Shards[s]
@@ -88,7 +88,7 @@ func (m *Migrator) pullAll(prev shardctrl.Config, pending []int, num int) (map[s
 
 	data := map[string]string{}
 	for owner, shards := range byOwner {
-		d, err := pullFromGroup(prev.Groups[owner], num, shards)
+		d, err := pullFromGroup(ctx, prev.Groups[owner], num, shards)
 		if err != nil {
 			return nil, err
 		}
@@ -99,23 +99,41 @@ func (m *Migrator) pullAll(prev shardctrl.Config, pending []int, num int) (map[s
 	return data, nil
 }
 
-func pullFromGroup(members []string, num int, shards []int) (map[string]string, error) {
+func pullFromGroup(ctx context.Context, members []string, num int, shards []int) (map[string]string, error) {
 	args := &kvapi.PullArgs{Num: num, Shards: shards}
 	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		addr := members[attempt%len(members)]
 		conn, err := rpc.DialHTTP("tcp", addr)
 		if err != nil {
-			time.Sleep(pullRetryDelay)
+			if !sleep(ctx, pullRetryDelay) {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 		var reply kvapi.PullReply
 		err = conn.Call("MigrationService.Pull", args, &reply)
 		conn.Close()
 		if err != nil || !reply.Ready {
-			time.Sleep(pullRetryDelay)
+			if !sleep(ctx, pullRetryDelay) {
+				return nil, ctx.Err()
+			}
 			continue
 		}
 		return reply.Data, nil
+	}
+}
+
+func sleep(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
