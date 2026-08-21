@@ -10,11 +10,19 @@ type OpKind string
 const OpSet OpKind = "set"
 const OpDelete OpKind = "delete"
 const OpAddNode OpKind = "addnode"
+const OpFreeze OpKind = "freeze"
+const OpInstall OpKind = "install"
 
 type Command struct {
 	Op    OpKind
 	Key   string
 	Value string
+
+	Num      int
+	Remove   []int
+	ServeNow []int
+	Pending  []int
+	Data     map[string]string
 }
 
 func Encode(cmd Command) ([]byte, error) {
